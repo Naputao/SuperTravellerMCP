@@ -1,7 +1,0 @@
-Metadata-Version: 2.4
-Name: super-traveller-mcp
-Version: 0.1.0
-Summary: 智能列车路线搜索MCP服务 - 基于Dijkstra算法搜索最优乘车路线
-License: MIT
-Requires-Python: >=3.11
-Requires-Dist: mcp>=1.0.0

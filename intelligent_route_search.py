@@ -8,6 +8,7 @@ import heapq
 import logging
 from datetime import datetime, timedelta
 from collections import defaultdict
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,6 +16,9 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "super_traveller_mcp" / "data"
 
 MIN_TRANSFER_TIME = 0
 MAX_TRANSFERS = 50
@@ -25,42 +29,9 @@ ARRIVAL_DATE = "2026-06-01"
 DEPART_EARLIEST = "21:00"
 ARRIVAL_LATEST = "12:00"
 
-CITY_KEYWORDS = [
-    "北京", "天津", "上海", "重庆",
-    "合肥", "南京", "杭州", "广州", "深圳", "成都",
-    "武汉", "西安", "郑州", "济南", "沈阳", "哈尔滨",
-    "昆明", "贵阳", "南宁", "兰州", "乌鲁木齐",
-    "石家庄", "太原", "呼和浩特", "银川", "西宁", "拉萨",
-    "阜阳", "六安", "蚌埠", "芜湖", "安庆", "马鞍山",
-    "徐州", "常州", "无锡", "苏州", "镇江",
-    "扬州", "南通", "淮安", "盐城", "泰州",
-    "宁波", "温州", "嘉兴", "绍兴", "金华",
-    "青岛", "烟台", "潍坊", "临沂", "济宁",
-    "洛阳", "南阳", "新乡", "开封", "安阳",
-    "株洲", "湘潭", "衡阳", "岳阳", "常德",
-    "九江", "赣州", "上饶", "宜春", "吉安",
-    "霍邱", "巢湖",
-    "德州", "沧州", "保定", "邯郸", "秦皇岛",
-    "大连", "鞍山", "抚顺", "锦州",
-    "大庆", "齐齐哈尔", "牡丹江",
-    "泉州", "厦门", "福州",
-    "珠海", "佛山", "东莞", "惠州",
-    "廊坊", "涿州", "德州", "沧州",
-]
-
-
 def _to_minutes(t: str) -> int:
     h, m = t.strip().split(":")
     return int(h) * 60 + int(m)
-
-
-def _extract_city(station_name: str) -> str:
-    for city in CITY_KEYWORDS:
-        if city in station_name:
-            return city
-    if len(station_name) >= 2:
-        return station_name[:2]
-    return station_name
 
 
 SAME_CITY_TRANSFER_MINUTES = 0
@@ -96,55 +67,50 @@ def add_same_city(data):
                 out.setdefault(stn, set()).add(other)
 
 
-def load_train_data(data,filepath: str = "train_stations.json",
-                    stn_file: str = "/Users/bytedance/code/12306_station.json"):
+def load_train_data(filepaths: list[str | Path] = [DATA_DIR / "train_G.json", DATA_DIR / "train_Z.json", DATA_DIR / "train_D.json", DATA_DIR / "train_T.json", DATA_DIR / "train_C.json"],
+                    stn_file: str | Path = DATA_DIR / "12306_station.json"):
     """加载train_stations.json，构建搜索所需的全部索引"""
-    with open(filepath, encoding="utf-8") as f:
-        raw = json.load(f)
+    leg_index = defaultdict(list)
+    outgoing = defaultdict(set)
+    stn_to_city = dict()
+    city_stns = defaultdict(set)
+    with open(DATA_DIR / "train_station.json", encoding="utf-8") as f:
+        stn_to_city = json.load(f)
+    for filepath in filepaths:
+        with open(filepath, encoding="utf-8") as f:
+            raw = json.load(f)
 
-    leg_index = defaultdict(list, data.get("legs", {}))
-    outgoing = defaultdict(set, {k: set(v) for k, v in data.get("out", {}).items()})
-    stn_to_city = dict(data.get("stn_city", {}))
-    city_stns = defaultdict(set, {k: set(v) for k, v in data.get("city_stns", {}).items()})
+        for train in raw.get("trains", []):
+            tcode = train["train_code"]
+            stns = train.get("stations", [])
+            names = [s["station_name"] for s in stns]
 
-    for train in raw.get("trains", []):
-        tcode = train["train_code"]
-        stns = train.get("stations", [])
-        names = [s["station_name"] for s in stns]
-
-        for i, fstn in enumerate(names):
-            fdep = stns[i].get("depart_time", "")
-            if not fdep or fdep == "----":
-                continue
-            for j in range(i + 1, len(names)):
-                tarr = stns[j].get("arrive_time", "")
-                if not tarr or tarr == "----":
+            for i, fstn in enumerate(names):
+                fdep = stns[i].get("depart_time", "")
+                if not fdep or fdep == "----":
                     continue
-                sm = _to_minutes(fdep)
-                am = _to_minutes(tarr)
-                if am < sm:
-                    am += 1440
-                dur = am - sm
-                leg_index[(fstn, names[j])].append({
-                    "train": tcode,
-                    "dep": fdep,
-                    "arr": tarr,
-                    "dur": dur,
-                    "_from": fstn, "_to": names[j],
-                })
-                outgoing[fstn].add(names[j])
+                for j in range(i + 1, len(names)):
+                    tarr = stns[j].get("arrive_time", "")
+                    if not tarr or tarr == "----":
+                        continue
+                    sm = _to_minutes(fdep)
+                    am = _to_minutes(tarr)
+                    if am < sm:
+                        am += 1440
+                    dur = am - sm
+                    leg_index[(fstn, names[j])].append({
+                        "train": tcode,
+                        "dep": fdep,
+                        "arr": tarr,
+                        "dur": dur,
+                        "_from": fstn, "_to": names[j],
+                    })
+                    outgoing[fstn].add(names[j])
 
-    total_legs = sum(len(v) for v in leg_index.values())
+        total_legs = sum(len(v) for v in leg_index.values())
 
-    for stn in set().union(*[set(v) for v in outgoing.values()],
-                           *[k[0] for k in leg_index],
-                           *[k[1] for k in leg_index]):
-        city = _extract_city(stn)
-        stn_to_city[stn] = city
-        city_stns[city].add(stn)
-
-    logger.info(f"加载 {len(raw.get('trains', []))} 趟车次, "
-                f"{total_legs} 条站对, {len(stn_to_city)} 个车站")
+        logger.info(f"加载 {len(raw.get('trains', []))} 趟车次, "
+                    f"{total_legs} 条站对, {len(stn_to_city)} 个车站")
 
     return {
         "legs": dict(leg_index),
@@ -264,9 +230,7 @@ def format_results(routes: list) -> dict:
         total_dur = sum(seg["dur"] for seg in r["segments"])
         cities = []
         for s in stns:
-            c = _extract_city(s)
-            if not cities or c != cities[-1]:
-                cities.append(c)
+            cities.append(s)
 
         route_list.append({
             "id": i + 1,
@@ -298,14 +262,17 @@ def format_results(routes: list) -> dict:
 
 def main():
     import sys
+    data_files = [
+        DATA_DIR / "train_G.json",
+        DATA_DIR / "train_Z.json",
+        DATA_DIR / "train_D.json",
+        DATA_DIR / "train_T.json",
+        DATA_DIR / "train_C.json",
+    ]
     for i, a in enumerate(sys.argv):
         if a == "--data" and i + 1 < len(sys.argv):
-            fpath = sys.argv[i + 1]
-    data = {"legs":defaultdict(list),"out":defaultdict(set),"stn_city":{},"city_stns":defaultdict(set)}
-    data = load_train_data(data,"train_g.json")
-    data = load_train_data(data,"train_z.json")
-    data = load_train_data(data,"train_d.json")
-    data = load_train_data(data,"train_C.json")
+            data_files = [BASE_DIR / sys.argv[i + 1]]
+    data = load_train_data(data_files)
     add_same_city(data)
 
     start = datetime.now()
@@ -314,7 +281,7 @@ def main():
 
     result = format_results(routes)
 
-    out_path = "route_search_result.json"
+    out_path = BASE_DIR / "route_search_result.json"
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
 

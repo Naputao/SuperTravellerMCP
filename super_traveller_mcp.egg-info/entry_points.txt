@@ -1,2 +1,0 @@
-[console_scripts]
-super-traveller-mcp = super_traveller_mcp.server:main
